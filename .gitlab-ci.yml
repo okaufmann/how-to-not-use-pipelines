@@ -1,0 +1,98 @@
+stages:
+  - build
+  - test
+  - package
+  - deploy
+
+build:
+  image: bash
+  stage: build
+  script:
+    - "sh tools/build.sh"
+
+test:
+  image: bash
+  stage: test
+  script:
+    - "sh tools/test.sh"
+
+package:
+  stage: package
+  tags:
+   - docker
+  image: docker:latest
+  dependencies:
+  - build_backend
+  variables:
+    DOCKER_DRIVER: overlay2
+  services:
+  - docker:dind
+  before_script:
+  - docker info
+  script:
+   - docker login -u "gitlab-ci-token" -p "$CI_BUILD_TOKEN" $CI_REGISTRY
+   - docker build --pull -t "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"-backend -f docker/Dockerfile .
+   - docker push "$CI_REGISTRY_IMAGE:$CI_COMMIT_REF_SLUG"-backend
+
+feature:
+  stage: deploy
+  image: registry.gitlab.com/okaufmann/rancher-gitlab-cli:master
+  tags:
+   - docker
+  dependencies: []
+  except:
+    - develop
+    - master
+  environment:
+    name: $CI_COMMIT_REF_SLUG
+    url: https://$CI_COMMIT_REF_SLUG-htnup.lab.mighty-code.com
+    on_stop: stop_review
+  script:
+    - cd docker/feature
+    - rancher --env "Apps" up -s $CI_PROJECT_PATH_SLUG-$CI_COMMIT_REF_SLUG -d -c --force-upgrade
+
+stop_review:
+  image: registry.gitlab.com/okaufmann/rancher-gitlab-cli:master
+  stage: deploy
+  when: manual
+  dependencies: []
+  except:
+      - develop
+      - master
+  environment:
+    name: $CI_COMMIT_REF_SLUG
+    url: https://$CI_COMMIT_REF_SLUG-htnup.lab.mighty-code.com
+    action: stop
+  script:
+    - cd docker/feature
+    - rancher --env "Apps" rm --stop $CI_PROJECT_PATH_SLUG-$CI_COMMIT_REF_SLUG
+
+develop:
+  stage: deploy
+  image: registry.gitlab.com/okaufmann/rancher-gitlab-cli:master
+  tags:
+   - docker
+  only:
+    - develop
+  dependencies: []
+  environment:
+    name: $CI_COMMIT_REF_SLUG
+    url: https://$CI_COMMIT_REF_SLUG-htnup.lab.mighty-code.com
+  script:
+    - cd docker/develop
+    - rancher --env "Apps" up -s $CI_PROJECT_PATH_SLUG-$CI_COMMIT_REF_SLUG -d -c --force-upgrade
+
+master:
+  stage: deploy
+  image: registry.gitlab.com/okaufmann/rancher-gitlab-cli:master
+  tags:
+   - docker
+  only:
+    - master
+  dependencies: []
+  environment:
+    name: $CI_COMMIT_REF_SLUG
+    url: https://$CI_COMMIT_REF_SLUG-htnup.lab.mighty-code.com
+  script:
+    - cd docker/prod
+    - rancher --env "Apps" up -s $CI_PROJECT_PATH_SLUG-$CI_COMMIT_REF_SLUG -d -c --force-upgrade
